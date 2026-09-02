@@ -10,9 +10,10 @@
     "@zip-js/zip-js": "jsr:@zip-js/zip-js@^2.8.61"
   },
   "tasks": {
-    "check": "deno check src/main.ts scripts/package.ts tests/host-simulator.ts",
+    "check": "deno check src/main.ts scripts/package.ts tests/host-simulator.ts tests/acp-forward.test.ts",
     "lint": "deno lint src scripts tests bundle.config.ts",
     "format": "deno fmt src scripts tests bundle.config.ts deno.json package.json README.md",
+    "test": "deno test --allow-read tests/acp-forward.test.ts",
     "simulate": "deno run --allow-run --allow-read --allow-env --allow-net tests/host-simulator.ts",
     "dev": "deno run --no-prompt --allow-run --allow-read --allow-env --allow-net src/main.ts",
     "build": "deno bundle src/main.ts -o dist/main.js",

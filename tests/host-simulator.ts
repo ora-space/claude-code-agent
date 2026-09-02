@@ -137,7 +137,6 @@ async function handleChildProcessRequest(
           cwd: (params.cwd as string | undefined) ?? undefined,
           env: {
             ...requestedEnvironment,
-            ORA_MCP_SIMULATED: "host-only-test-value",
           },
           stdin: "piped",
           stdout: "piped",
@@ -268,9 +267,8 @@ const resourceSignatures = registration.effectResources.map((resource) =>
 check(
   JSON.stringify(resourceSignatures) === JSON.stringify([
     ".claude/skills:ora/skill-directory.v1",
-    ".mcp.json:ora/claude-mcp-config.v1",
   ]),
-  "declares the Skill and MCP Resources",
+  "declares the Skill Resource",
 );
 console.log(`ok: register ${JSON.stringify(register.params)}`);
 
@@ -367,7 +365,7 @@ console.log("ok: listModels [] (Claude publishes models through ACP only)");
 
 const coordination = {
   targetId: "sim-target",
-  resourceIds: ["sim-skills", "sim-mcp"],
+  resourceIds: ["sim-skills"],
 };
 await send({
   jsonrpc: "2.0",
@@ -378,7 +376,7 @@ await send({
 check(
   (await waitFor((message) => message.id === 3, "effect/coordinate")).error ===
     undefined,
-  "coordinates both Resources together",
+  "coordinates the Skill Resource",
 );
 await send({
   jsonrpc: "2.0",

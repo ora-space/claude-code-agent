@@ -15,15 +15,6 @@ export const SKILLS_RESOURCE: EffectResourceDeclaration = {
   coordination: "quiesce_before_mutation",
 };
 
-/** The shared project MCP configuration Claude Code reads when its adapter starts. */
-export const MCP_RESOURCE: EffectResourceDeclaration = {
-  workspaceRelativePath: ".mcp.json",
-  // SDK 0.8 narrows this field to Skills even though the host protocol already accepts MCP.
-  materializationFormat:
-    "ora/claude-mcp-config.v1" as typeof SKILL_DIRECTORY_V1,
-  coordination: "quiesce_before_mutation",
-};
-
 const SESSION_PROMPT_METHOD = "session/prompt";
 const CONSUMER_NOT_READY = -32000;
 const QUIESCE_TIMEOUT_MS = 10_000;
@@ -42,7 +33,7 @@ export class AgentEffectCoordinator {
   }
 
   readonly definition: AgentEffectDefinition = {
-    resources: [SKILLS_RESOURCE, MCP_RESOURCE],
+    resources: [SKILLS_RESOURCE],
     coordinate: (context) => this.#coordinate(context),
     reactivate: (context) => this.#reactivate(context),
     verifyReady: (context) => this.#verifyReady(context),

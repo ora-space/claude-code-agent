@@ -48,11 +48,11 @@ takes care of getting Claude Code to pick them up — no manual restart needed.
 
 ## Project MCP servers
 
-Installed and configured MCP plugins are materialized into the project's
-`.mcp.json`. Ora preserves user-owned servers, coordinates the file with the
-Skill tree through one barrier, and restarts the adapter once after the whole
-projection is current. Secret values stay in Ora's configuration store and are
-injected only into the host-owned adapter process.
+Ora delivers configured MCP plugins through ACP `session/new` and `session/load`
+`mcpServers`. This plugin forwards those fields unchanged and never writes
+`.mcp.json` or injects `ORA_MCP_*` environment variables. Secret values stay in
+Ora's configuration store and only appear in the short-lived ACP frame sent to
+this trusted adapter.
 
 ## Approval behavior
 
