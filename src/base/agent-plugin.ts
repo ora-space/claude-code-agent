@@ -1,9 +1,12 @@
 import {
   type AcpSender,
+  AGENT_METHODS,
   type AgentEffectDefinition,
   type AgentModel,
   type AgentStartContext,
+  createHostProcesses,
   defineAgent,
+  type HostProcesses,
   type JsonValue,
 } from "@ora-space/plugin-sdk";
 
@@ -15,6 +18,12 @@ import {
  */
 export interface PluginContext {
   readonly pluginId: string;
+  readonly processes: HostProcesses;
+}
+
+/** What the caller of {@link runAgentPlugin} supplies; `processes` is assembled internally. */
+export interface RunAgentPluginOptions {
+  readonly pluginId: string;
 }
 
 /**
@@ -25,14 +34,14 @@ export interface PluginContext {
  * `agent/listModels`.
  */
 export const AGENT_METHOD_ROUTES = {
-  onStart: "agent/start",
-  onStop: "agent/stop",
-  onListModels: "agent/listModels",
+  onStart: AGENT_METHODS.start,
+  onStop: AGENT_METHODS.stop,
+  onListModels: AGENT_METHODS.listModels,
 } as const;
 
 /** Maps the class method that consumes host notifications onto its wire name. */
 export const AGENT_NOTIFICATION_ROUTES = {
-  onAcp: "agent/acp",
+  onAcp: AGENT_METHODS.acp,
 } as const;
 
 /**
@@ -102,11 +111,10 @@ type BoundHandler = (...args: never[]) => unknown;
  */
 export async function runAgentPlugin(
   plugin: AgentPlugin,
-  context: PluginContext,
+  options: RunAgentPluginOptions,
 ): Promise<void> {
   const routes = flattenRoutes(plugin);
   protectProtocolStdout();
-  await plugin.onActivate(context);
 
   const definition = defineAgent({
     start: (startContext, send) =>
@@ -125,6 +133,8 @@ export async function runAgentPlugin(
         | Promise<void>,
     effects: plugin.effects,
   });
+  const processes = createHostProcesses(definition);
+  await plugin.onActivate({ pluginId: options.pluginId, processes });
 
   try {
     await definition.run();

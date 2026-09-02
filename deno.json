@@ -1,18 +1,22 @@
 {
   "name": "@ora-space/claude-agent",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "exports": "./src/main.ts",
   "minimumDependencyAge": 0,
   "imports": {
-    "@ora-space/plugin-sdk": "jsr:@ora-space/plugin-sdk@0.3.0"
+    "@ora-space/plugin-sdk": "jsr:@ora-space/plugin-sdk@0.8.0",
+    "@std/cli": "jsr:@std/cli@^1.0.32",
+    "@std/path": "jsr:@std/path@^1.1.6",
+    "@zip-js/zip-js": "jsr:@zip-js/zip-js@^2.8.61"
   },
   "tasks": {
-    "check": "deno check src/main.ts tests/host-simulator.ts",
-    "lint": "deno lint src tests",
-    "format": "deno fmt src tests deno.json package.json README.md",
+    "check": "deno check src/main.ts scripts/package.ts tests/host-simulator.ts",
+    "lint": "deno lint src scripts tests bundle.config.ts",
+    "format": "deno fmt src scripts tests bundle.config.ts deno.json package.json README.md",
     "simulate": "deno run --allow-run --allow-read --allow-env --allow-net tests/host-simulator.ts",
     "dev": "deno run --no-prompt --allow-run --allow-read --allow-env --allow-net src/main.ts",
-    "build": "deno bundle src/main.ts -o dist/main.js"
+    "build": "deno bundle src/main.ts -o dist/main.js",
+    "package": "deno run --allow-run --allow-read --allow-write --allow-env scripts/package.ts"
   },
   "compilerOptions": {
     "strict": true,

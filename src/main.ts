@@ -10,7 +10,7 @@ import {
   runAgentPlugin,
 } from "./base/agent-plugin.ts";
 import { forwardAcpFrame } from "./handlers/acp.ts";
-import { SkillEffectCoordinator } from "./handlers/effects.ts";
+import { AgentEffectCoordinator } from "./handlers/effects.ts";
 import { startClaude, stopClaude } from "./handlers/lifecycle.ts";
 import { listClaudeModels } from "./handlers/models.ts";
 import { ClaudeClient } from "./services/claude-client.ts";
@@ -47,12 +47,13 @@ class ClaudeAgentPlugin extends AgentPlugin {
     },
   });
 
-  readonly #effects = new SkillEffectCoordinator(this.#client, () => this.#cwd);
+  readonly #effects = new AgentEffectCoordinator(this.#client, () => this.#cwd);
 
   override readonly effects = this.#effects.definition;
 
   override onActivate(context: PluginContext): void {
     console.info(`${context.pluginId} activated`);
+    this.#client.attachProcesses(context.processes);
   }
 
   override onStart = async (

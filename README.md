@@ -24,19 +24,14 @@ pick it, and your conversation runs against the Claude Code CLI through its
   npm i -g @agentclientprotocol/claude-agent-acp
   ```
   If you'd rather point at a specific binary instead of relying on `PATH`, set
-  `ORA_CLAUDE_ACP_BIN` to its full path.
+  `ORA_CLAUDE_ACP_BIN` to its full path. This release is validated against
+  `claude-agent-acp` 0.64.0; other compatible versions are not rejected at
+  runtime.
 
 ## Installing
 
-Drop this plugin's folder into Ora's plugins directory
-(`<ORA_DATA_DIR>/plugins/`) — Ora discovers any folder there with a
-`package.json` automatically. Deleting the folder removes the agent again;
-there's no other install step.
-
-> **Note:** this plugin claims the same agent identity as Ora's built-in Claude
-> Code support. Until that built-in support is removed, Ora will keep using its
-> own copy and this plugin's copy will sit unused — installing it is safe, but
-> it won't take over until the built-in one is retired.
+Install the `.orax` artifact from the marketplace or build it locally with
+`deno task package --tag v0.2.0 --repo ora-space/claude-code-agent`.
 
 ## Using it
 
@@ -50,6 +45,20 @@ Claude Code looks for reusable [Skills](https://agentclientprotocol.com) in a
 `.claude/skills/<name>/SKILL.md` folder at the root of your project, alongside
 any skills installed globally on your machine. Add or edit files there and Ora
 takes care of getting Claude Code to pick them up — no manual restart needed.
+
+## Project MCP servers
+
+Installed and configured MCP plugins are materialized into the project's
+`.mcp.json`. Ora preserves user-owned servers, coordinates the file with the
+Skill tree through one barrier, and restarts the adapter once after the whole
+projection is current. Secret values stay in Ora's configuration store and are
+injected only into the host-owned adapter process.
+
+## Approval behavior
+
+`claude-agent-acp` 0.64.0 exposes a fixed approval behavior through ACP. Ora
+forwards it as-is; this plugin does not offer a separate permission-mode toggle
+and does not claim that changing an Ora setting alters Claude Code approvals.
 
 ## Configuration
 

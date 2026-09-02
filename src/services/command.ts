@@ -1,4 +1,12 @@
-import { AGENT_NOT_INSTALLED, PluginMethodError } from "@ora-space/plugin-sdk";
+import {
+  AGENT_NOT_INSTALLED,
+  type AgentInvocation,
+  type HostChildProcess,
+  type HostProcesses,
+  HostRequestError,
+  PluginMethodError,
+  spawnAgentProcess,
+} from "@ora-space/plugin-sdk";
 
 /** The npm bin name of the ACP adapter that fronts Claude Code. */
 const BINARY_NAME = "claude-agent-acp";
@@ -19,6 +27,41 @@ export function resolveClaudeCommands(): string[] {
   return Deno.build.os === "windows"
     ? [`${BINARY_NAME}.cmd`, BINARY_NAME]
     : [BINARY_NAME];
+}
+
+/** Spawns the ACP adapter through Ora so host-owned MCP variables reach only this process. */
+export function spawnClaude(
+  processes: HostProcesses,
+  invocation: AgentInvocation,
+): Promise<HostChildProcess> {
+  const explicit = readEnv("ORA_CLAUDE_ACP_BIN")?.trim();
+  if (explicit === undefined || explicit === "") {
+    return spawnAgentProcess(processes, {
+      command: resolveClaudeCommands(),
+    }, invocation);
+  }
+  return spawnOverride(processes, explicit, invocation);
+}
+
+/** Preserves the retryable missing-binary classification for an explicit developer override. */
+async function spawnOverride(
+  processes: HostProcesses,
+  command: string,
+  invocation: AgentInvocation,
+): Promise<HostChildProcess> {
+  try {
+    return await processes.spawn({ command, ...invocation });
+  } catch (error) {
+    if (
+      error instanceof HostRequestError && error.kind === "program_not_found"
+    ) {
+      throw new PluginMethodError(
+        AGENT_NOT_INSTALLED,
+        `ORA_CLAUDE_ACP_BIN points at ${command}, which does not exist`,
+      );
+    }
+    throw error;
+  }
 }
 
 /** Classifies a spawn failure as a missing binary, tolerating platform error wording. */

@@ -1,5 +1,5 @@
 import type { JsonValue } from "@ora-space/plugin-sdk";
-import type { SkillEffectCoordinator } from "./effects.ts";
+import type { AgentEffectCoordinator } from "./effects.ts";
 import type { ClaudeClient } from "../services/claude-client.ts";
 
 /**
@@ -18,7 +18,7 @@ import type { ClaudeClient } from "../services/claude-client.ts";
  */
 export function forwardAcpFrame(
   client: ClaudeClient,
-  effects: SkillEffectCoordinator,
+  effects: AgentEffectCoordinator,
   frame: JsonValue,
 ): Promise<void> | void {
   if (effects.intercept(frame)) {

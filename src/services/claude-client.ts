@@ -1,5 +1,5 @@
-import type { JsonValue } from "@ora-space/plugin-sdk";
-import { tryEachCandidate } from "./command.ts";
+import type { HostProcesses, JsonValue } from "@ora-space/plugin-sdk";
+import { spawnClaude } from "./command.ts";
 import { decodeLines, encodeLine } from "./ndjson.ts";
 
 /** The subset of a spawned child process this bridge depends on, so tests can substitute one. */
@@ -7,14 +7,14 @@ export interface SpawnedProcess {
   stdin: WritableStream<Uint8Array>;
   stdout: ReadableStream<Uint8Array>;
   stderr: ReadableStream<Uint8Array>;
-  readonly pid: number;
+  readonly pid: number | undefined;
   kill(): void;
   readonly exited: Promise<void>;
 }
 
 export interface ClaudeClientOptions {
   /** Overrides process spawning; injected by tests. */
-  spawn?: (command: string, cwd: string) => SpawnedProcess;
+  spawn?: (cwd: string) => SpawnedProcess | Promise<SpawnedProcess>;
   /** Receives every ACP frame emitted by the adapter, in output order. */
   onAcpFrame?: (frame: JsonValue) => void;
   /** Invoked after the adapter exits on its own, never after an explicit stop. */
@@ -37,20 +37,26 @@ interface RunningProcess {
  * NDJSON and otherwise passed through verbatim.
  */
 export class ClaudeClient {
-  readonly #spawn: (command: string, cwd: string) => SpawnedProcess;
+  readonly #spawn: (cwd: string) => SpawnedProcess | Promise<SpawnedProcess>;
   readonly #onAcpFrame: (frame: JsonValue) => void;
   readonly #onExited: () => void;
   #running: RunningProcess | undefined;
+  #processes: HostProcesses | undefined;
   #expectedExit = false;
 
   constructor(options: ClaudeClientOptions = {}) {
-    this.#spawn = options.spawn ?? spawnClaudeProcess;
+    this.#spawn = options.spawn ?? ((cwd) => this.#spawnViaHost(cwd));
     this.#onAcpFrame = options.onAcpFrame ?? (() => {});
     this.#onExited = options.onExited ?? (() => {});
   }
 
   get running(): boolean {
     return this.#running !== undefined;
+  }
+
+  /** Supplies the host-owned process client after plugin activation. */
+  attachProcesses(processes: HostProcesses): void {
+    this.#processes = processes;
   }
 
   /**
@@ -63,12 +69,9 @@ export class ClaudeClient {
     await this.stop();
     this.#expectedExit = false;
 
-    await tryEachCandidate((command) => {
-      const process = this.#spawn(command, cwd);
-      this.#running = { process, stdinWriter: process.stdin.getWriter() };
-      this.#attach(process);
-      return process;
-    });
+    const process = await this.#spawn(cwd);
+    this.#running = { process, stdinWriter: process.stdin.getWriter() };
+    this.#attach(process);
   }
 
   /**
@@ -110,9 +113,10 @@ export class ClaudeClient {
     void this.#pumpStdout(process);
     void this.#pumpStderr(process);
     void process.exited.then(() => {
-      if (this.#running?.process === process) {
-        this.#running = undefined;
+      if (this.#running?.process !== process) {
+        return;
       }
+      this.#running = undefined;
       if (!this.#expectedExit) {
         console.warn("claude-agent-acp exited unexpectedly");
         this.#onExited();
@@ -162,27 +166,25 @@ export class ClaudeClient {
       console.warn(`claude-agent-acp stderr read failed: ${error}`);
     }
   }
-}
 
-/**
- * Spawns the adapter with all three stdio pipes exposed for streaming.
- *
- * No arguments are passed: `claude-agent-acp` is a native ACP server with no subcommand, and it
- * takes its initial directory from `cwd` rather than a flag.
- */
-function spawnClaudeProcess(command: string, cwd: string): SpawnedProcess {
-  const child = new Deno.Command(command, {
-    cwd,
-    stdin: "piped",
-    stdout: "piped",
-    stderr: "piped",
-  }).spawn();
-  return {
-    stdin: child.stdin,
-    stdout: child.stdout,
-    stderr: child.stderr,
-    pid: child.pid,
-    kill: () => child.kill(),
-    exited: child.status.then(() => undefined),
-  };
+  /** Adapts the host-owned child-process handle to the bridge's stream interface. */
+  async #spawnViaHost(cwd: string): Promise<SpawnedProcess> {
+    if (this.#processes === undefined) {
+      throw new Error(
+        "ClaudeClient cannot spawn before attachProcesses() runs",
+      );
+    }
+    const child = await spawnClaude(this.#processes, { args: [], cwd });
+    return {
+      stdin: new WritableStream<Uint8Array>({
+        write: (chunk) => child.write(chunk),
+        close: () => child.closeStdin(),
+      }),
+      stdout: child.stdout,
+      stderr: child.stderr,
+      pid: child.pid,
+      kill: () => void child.kill().catch(() => {}),
+      exited: child.exited.then(() => undefined),
+    };
+  }
 }
