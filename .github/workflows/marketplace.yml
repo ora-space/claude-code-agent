@@ -40,7 +40,7 @@ jobs:
       run:
         shell: bash
     steps:
-      # `APP_ID` and `APP_PRIVATE_KEY` are organization-level and shared with selected repositories
+      # `MARKETPLACE_SYNC_APP_ID` and `MARKETPLACE_SYNC_APP_PRIVATE_KEY` are organization-level and shared with selected repositories
       # only, so this repository can be off that list — which is expected configuration waiting on
       # an owner, not a broken workflow. Reaching `create-github-app-token` without them fails with
       # an opaque token error every single night, so the gap is named here instead and the
@@ -49,13 +49,13 @@ jobs:
       - name: Check for the marketplace credentials
         id: credentials
         env:
-          APP_ID: ${{ vars.APP_ID }}
-          APP_PRIVATE_KEY: ${{ secrets.APP_PRIVATE_KEY }}
+          MARKETPLACE_SYNC_APP_ID: ${{ vars.MARKETPLACE_SYNC_APP_ID }}
+          MARKETPLACE_SYNC_APP_PRIVATE_KEY: ${{ secrets.MARKETPLACE_SYNC_APP_PRIVATE_KEY }}
         run: |
           set -euo pipefail
           MISSING=
-          [ -n "${APP_ID:-}" ] || MISSING="${MISSING} vars.APP_ID"
-          [ -n "${APP_PRIVATE_KEY:-}" ] || MISSING="${MISSING} secrets.APP_PRIVATE_KEY"
+          [ -n "${MARKETPLACE_SYNC_APP_ID:-}" ] || MISSING="${MISSING} vars.MARKETPLACE_SYNC_APP_ID"
+          [ -n "${MARKETPLACE_SYNC_APP_PRIVATE_KEY:-}" ] || MISSING="${MISSING} secrets.MARKETPLACE_SYNC_APP_PRIVATE_KEY"
           if [ -z "$MISSING" ]; then
             echo "ready=true" >> "$GITHUB_OUTPUT"
             exit 0
@@ -68,7 +68,7 @@ jobs:
             echo "\`${MISSING# }\` is not available to \`${GITHUB_REPOSITORY}\`."
             echo
             echo "Ask an \`ora-space\` owner to add this repository to the visibility list of the"
-            echo "organization's \`APP_ID\` variable and \`APP_PRIVATE_KEY\` secret. Everything"
+            echo "organization's \`MARKETPLACE_SYNC_APP_ID\` variable and \`MARKETPLACE_SYNC_APP_PRIVATE_KEY\` secret. Everything"
             echo "below ran; only the marketplace pull request was skipped."
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -126,15 +126,15 @@ jobs:
 
       # `GITHUB_TOKEN` is scoped to this repository and cannot write to the marketplace, so the
       # cross-repository push borrows a short-lived installation token instead of a long-lived PAT.
-      # `APP_ID` and `APP_PRIVATE_KEY` are the same organization-level pair the other ora-space
+      # `MARKETPLACE_SYNC_APP_ID` and `MARKETPLACE_SYNC_APP_PRIVATE_KEY` are the same organization-level pair the other ora-space
       # publishing workflows use.
       - name: Create a marketplace token
         id: app-token
         if: steps.credentials.outputs.ready == 'true'
         uses: actions/create-github-app-token@v3
         with:
-          app-id: ${{ vars.APP_ID }}
-          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          app-id: ${{ vars.MARKETPLACE_SYNC_APP_ID }}
+          private-key: ${{ secrets.MARKETPLACE_SYNC_APP_PRIVATE_KEY }}
           owner: ora-space
           repositories: marketplace
           permission-contents: write

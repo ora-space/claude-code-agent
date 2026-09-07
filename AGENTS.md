@@ -216,7 +216,7 @@ The branch is one per plugin (`release/ora-space.claude`) and force-pushed, not
 one per tag: a nightly job branching per tag would stack up an open PR per
 release the moment two nights in a row produced one, all editing the same file.
 An unmerged PR is retargeted at the newer release instead. The push needs the
-organization's `APP_ID` / `APP_PRIVATE_KEY` app credentials, because
+organization's `MARKETPLACE_SYNC_APP_ID` / `MARKETPLACE_SYNC_APP_PRIVATE_KEY` app credentials, because
 `GITHUB_TOKEN` is scoped to this repository and cannot write to the marketplace.
 
 Those credentials are shared with selected repositories only, so a repository
