@@ -202,13 +202,17 @@ tag-and-hope design would tag every upstream bump and publish none of them.
 ### Publishing to the marketplace
 
 A release is not installable until `registry/o/ora-space.claude/orax.toml` in
-`ora-space/marketplace` points at it. `marketplace.yml` opens that PR by itself
-the moment `release.yml` publishes a GitHub Release — it also runs on
-`workflow_dispatch` for the latest release or a specific tag — copying that
-release's `manifest.toml` in verbatim as the registry entry, along with
-`README.md` and every logo asset the plugin carries (`logo.svg`, any themed
-variant such as `logo.dark.svg`, and any raster format). It never merges
-anything.
+`ora-space/marketplace` points at it. `release.yml` calls `marketplace.yml` as a
+reusable workflow the moment its own release job succeeds — a direct
+`workflow_call`, not the `release` event, because `gh release create` runs under
+this repository's own `GITHUB_TOKEN`, and GitHub does not fire `release` events
+for another workflow to catch when the actor is the token of the same run.
+`marketplace.yml` also runs on `workflow_dispatch` for the latest release or a
+specific tag, which is how to pick up an entry that drifted behind for any other
+reason. Either way it copies the release's `manifest.toml` in verbatim as the
+registry entry, along with `README.md` and every logo asset the plugin carries
+(`logo.svg`, any themed variant such as `logo.dark.svg`, and any raster format).
+It never merges anything.
 
 Keeping publishing a separate workflow from releasing is deliberate: nothing
 here merges the PR, so **a merged marketplace PR, not a green `release.yml` or

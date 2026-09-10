@@ -5,17 +5,26 @@ name: Marketplace
 #
 # Releasing and publishing are deliberately two steps. `release.yml` builds the packages and
 # attaches `manifest.toml`, but nothing installs from a release until the registry entry points at
-# it, so a release that turns out to be bad can be superseded before anyone picks it up. This
-# workflow runs the moment `release.yml` publishes a GitHub Release, and can also be run by hand —
-# for the latest release or a specific tag — to pick up an entry that drifted behind for any other
-# reason: a PR nobody merged, a manual edit.
+# it, so a release that turns out to be bad can be superseded before anyone picks it up.
+# `release.yml` calls this workflow the moment it publishes a release, and it can also be run by
+# hand — for the latest release or a specific tag — to pick up an entry that drifted behind for any
+# other reason: a PR nobody merged, a manual edit.
+#
+# This is `workflow_call`, not `on: release`, because a release created with the repository's
+# `GITHUB_TOKEN` — which is how `release.yml` always creates one — does not fire a `release` event
+# for another workflow to catch; GitHub suppresses that to prevent recursive runs. A direct call is
+# the reliable way to chain onto a release this repository just made.
 #
 # Nothing here merges anything: a human still reviews and merges the PR in the marketplace repo.
 
 on:
-  release:
-    types: [published]
   workflow_dispatch:
+    inputs:
+      tag:
+        description: The release tag to publish. Defaults to this repository's latest release.
+        required: false
+        type: string
+  workflow_call:
     inputs:
       tag:
         description: The release tag to publish. Defaults to this repository's latest release.
@@ -79,10 +88,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           REQUESTED_TAG: ${{ inputs.tag }}
-          EVENT_TAG: ${{ github.event.release.tag_name }}
         run: |
           set -euo pipefail
-          TAG="${REQUESTED_TAG:-${EVENT_TAG:-}}"
+          TAG="${REQUESTED_TAG:-}"
           if [ -z "$TAG" ]; then
             TAG=$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName)
           fi

@@ -106,3 +106,16 @@ jobs:
             cat dist/manifest.toml
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
+
+  # A direct call, not the `release` event: `gh release create` above uses this run's own
+  # `GITHUB_TOKEN`, and GitHub does not fire `release` events for another workflow to catch when
+  # the actor is the token of the same run — that would be a recursive trigger. `needs: release`
+  # both orders this after the release exists and skips it if that job failed.
+  publish:
+    needs: release
+    permissions:
+      contents: read
+    uses: ./.github/workflows/marketplace.yml
+    with:
+      tag: ${{ inputs.tag || github.ref_name }}
+    secrets: inherit
