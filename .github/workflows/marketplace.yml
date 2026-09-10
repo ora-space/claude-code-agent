@@ -6,18 +6,15 @@ name: Marketplace
 # Releasing and publishing are deliberately two steps. `release.yml` builds the packages and
 # attaches `manifest.toml`, but nothing installs from a release until the registry entry points at
 # it, so a release that turns out to be bad can be superseded before anyone picks it up. This
-# workflow closes that gap on a schedule rather than at release time, which also means an entry
-# that drifted behind for any other reason — a PR nobody merged, a manual edit — is caught on the
-# next night instead of staying stale until someone notices.
+# workflow runs the moment `release.yml` publishes a GitHub Release, and can also be run by hand —
+# for the latest release or a specific tag — to pick up an entry that drifted behind for any other
+# reason: a PR nobody merged, a manual edit.
 #
 # Nothing here merges anything: a human still reviews and merges the PR in the marketplace repo.
 
 on:
-  schedule:
-    # 03:00 Beijing time, which is 19:00 UTC the day before — GitHub schedules in UTC only. One
-    # hour after `upstream.yml`, so a nightly upstream bump and the release it triggers are already
-    # published by the time this looks for the latest tag.
-    - cron: "0 19 * * *"
+  release:
+    types: [published]
   workflow_dispatch:
     inputs:
       tag:
@@ -43,9 +40,9 @@ jobs:
       # `MARKETPLACE_SYNC_APP_ID` and `MARKETPLACE_SYNC_APP_PRIVATE_KEY` are organization-level and shared with selected repositories
       # only, so this repository can be off that list — which is expected configuration waiting on
       # an owner, not a broken workflow. Reaching `create-github-app-token` without them fails with
-      # an opaque token error every single night, so the gap is named here instead and the
-      # publishing steps are skipped until it closes. `secrets` cannot be read from a step `if:`,
-      # hence the bounce through an output.
+      # an opaque token error on every run, so the gap is named here instead and the publishing
+      # steps are skipped until it closes. `secrets` cannot be read from a step `if:`, hence the
+      # bounce through an output.
       - name: Check for the marketplace credentials
         id: credentials
         env:
@@ -82,9 +79,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           REQUESTED_TAG: ${{ inputs.tag }}
+          EVENT_TAG: ${{ github.event.release.tag_name }}
         run: |
           set -euo pipefail
-          TAG="${REQUESTED_TAG:-}"
+          TAG="${REQUESTED_TAG:-${EVENT_TAG:-}}"
           if [ -z "$TAG" ]; then
             TAG=$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName)
           fi
@@ -150,7 +148,7 @@ jobs:
 
       # The branch is named per plugin rather than per tag, and the push is a force-push onto a
       # branch cut from the marketplace's default branch. Branching per tag would leave one open PR
-      # per release as soon as two nights in a row produced one, and those PRs would all conflict
+      # per release as soon as two releases in a row produced one, and those PRs would all conflict
       # on the same file; with one branch, an unmerged PR is retargeted at the newer release.
       - name: Open or refresh the marketplace pull request
         if: steps.credentials.outputs.ready == 'true'
@@ -184,7 +182,17 @@ jobs:
           mkdir -p "$DIR"
           cp ../dist/manifest.toml "${DIR}/orax.toml"
           cp ../README.md "${DIR}/README.md"
-          cp ../logo.svg "${DIR}/logo.svg"
+
+          # The bare logo, plus any themed variant (`logo.dark.svg`) and raster format the plugin
+          # carries. Cleared first so a variant the plugin has since dropped does not linger.
+          rm -f "${DIR}"/logo.*
+          shopt -s nullglob
+          for f in ../logo.svg ../logo.*.svg ../logo.png ../logo.*.png ../logo.jpg ../logo.*.jpg \
+            ../logo.jpeg ../logo.*.jpeg ../logo.webp ../logo.*.webp; do
+            cp "$f" "${DIR}/$(basename "$f")"
+          done
+          shopt -u nullglob
+
           git add "$DIR"
           if git diff --cached --quiet; then
             echo "the marketplace entry is already identical to ${TAG}"
@@ -199,7 +207,7 @@ jobs:
           SUBJECT="chore: update ${TITLE} to ${TAG}"
           BODY=$(printf '%s\n\n%s\n\n%s\n' \
             "Publishes \`${ID}\` ${TAG}, from [that release](https://github.com/${GITHUB_REPOSITORY}/releases/tag/${TAG})." \
-            "\`orax.toml\` is the release's own \`manifest.toml\` copied verbatim, so the per-target download URLs and SHA-256 digests are the ones the release workflow recorded for the artifacts it published. \`README.md\` and \`logo.svg\` are copied from the plugin repository at that tag." \
+            "\`orax.toml\` is the release's own \`manifest.toml\` copied verbatim, so the per-target download URLs and SHA-256 digests are the ones the release workflow recorded for the artifacts it published. \`README.md\` and its logo assets (\`logo.svg\`, any themed variant, and any raster format) are copied from the plugin repository at that tag." \
             "Opened automatically by \`.github/workflows/marketplace.yml\`.")
 
           NUMBER=$(gh pr list --repo ora-space/marketplace --state open --head "$BRANCH" --json number --jq '.[0].number // empty')

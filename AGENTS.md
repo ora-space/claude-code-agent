@@ -203,28 +203,33 @@ tag-and-hope design would tag every upstream bump and publish none of them.
 
 A release is not installable until `registry/o/ora-space.claude/orax.toml` in
 `ora-space/marketplace` points at it. `marketplace.yml` opens that PR by itself
-at 03:00 Beijing time — an hour after `upstream.yml`, so a nightly bump has
-already released — copying that release's `manifest.toml` in verbatim as the
-registry entry, along with `README.md` and `logo.svg`. It never merges anything.
+the moment `release.yml` publishes a GitHub Release — it also runs on
+`workflow_dispatch` for the latest release or a specific tag — copying that
+release's `manifest.toml` in verbatim as the registry entry, along with
+`README.md` and every logo asset the plugin carries (`logo.svg`, any themed
+variant such as `logo.dark.svg`, and any raster format). It never merges
+anything.
 
-Keeping publishing a step behind releasing is deliberate: a release nobody has
-published yet can simply be superseded. The cost is that **a merged marketplace
-PR, not a green `release.yml`, is what users can actually install** — a release
-sitting unpublished looks identical to a published one from this repository.
+Keeping publishing a separate workflow from releasing is deliberate: nothing
+here merges the PR, so **a merged marketplace PR, not a green `release.yml` or
+an opened marketplace PR, is what users can actually install** — a release
+nobody has reviewed into the marketplace yet looks identical to a published one
+from this repository's own state.
 
 The branch is one per plugin (`release/ora-space.claude`) and force-pushed, not
-one per tag: a nightly job branching per tag would stack up an open PR per
-release the moment two nights in a row produced one, all editing the same file.
-An unmerged PR is retargeted at the newer release instead. The push needs the
-organization's `MARKETPLACE_SYNC_APP_ID` / `MARKETPLACE_SYNC_APP_PRIVATE_KEY` app credentials, because
-`GITHUB_TOKEN` is scoped to this repository and cannot write to the marketplace.
+one per tag: branching per tag would stack up an open PR per release the moment
+two releases in a row produced one, all editing the same file. An unmerged PR is
+retargeted at the newer release instead. The push needs the organization's
+`MARKETPLACE_SYNC_APP_ID` / `MARKETPLACE_SYNC_APP_PRIVATE_KEY` app credentials,
+because `GITHUB_TOKEN` is scoped to this repository and cannot write to the
+marketplace.
 
 Those credentials are shared with selected repositories only, so a repository
 can simply be off that list. The workflow checks for them up front and stops
 with a run summary naming what is missing, rather than reaching
-`create-github-app-token` and failing on an opaque token error every night — the
-same distinction the plugin itself draws between expected configuration and a
-real failure. **A run that says "Not published" is that check, not a bug.**
+`create-github-app-token` and failing on an opaque token error on every run —
+the same distinction the plugin itself draws between expected configuration and
+a real failure. **A run that says "Not published" is that check, not a bug.**
 
 ### One packaging trap worth knowing
 

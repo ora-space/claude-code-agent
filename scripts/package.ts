@@ -250,6 +250,23 @@ async function stageClaude(plan: TargetPlan, staged: string): Promise<void> {
 }
 
 /**
+ * Matches every logo asset a plugin might carry: `logo.svg`, a themed variant like
+ * `logo.dark.svg`, and the same two shapes for the raster formats marketplaces also accept.
+ */
+const LOGO_PATTERN = /^logo(\.[^./]+)?\.(svg|png|jpe?g|webp)$/i;
+
+/** Every logo file in the plugin root, discovered by name rather than a fixed list. */
+async function findLogoFiles(): Promise<string[]> {
+  const files: string[] = [];
+  for await (const entry of Deno.readDir(".")) {
+    if (entry.isFile && LOGO_PATTERN.test(entry.name)) {
+      files.push(entry.name);
+    }
+  }
+  return files;
+}
+
+/**
  * Stages the files every package ships alongside its binaries.
  *
  * `target` is the triple the package self-declares in `[artifact]`, which is what lets Ora verify
@@ -258,7 +275,7 @@ async function stageClaude(plan: TargetPlan, staged: string): Promise<void> {
 async function stagePluginFiles(target: string): Promise<void> {
   await Deno.mkdir(STAGE_DIR, { recursive: true });
   await Deno.copyFile(join(DIST, "main.js"), join(STAGE_DIR, "main.js"));
-  for (const extra of ["logo.svg", "README.md"]) {
+  for (const extra of [...await findLogoFiles(), "README.md"]) {
     await Deno.copyFile(extra, join(STAGE_DIR, extra)).catch(() => {});
   }
   const manifest = (await Deno.readTextFile("orax.toml")).trimEnd();
