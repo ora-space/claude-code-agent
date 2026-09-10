@@ -197,7 +197,10 @@ jobs:
           shopt -s nullglob
           for f in ../logo.svg ../logo.*.svg ../logo.png ../logo.*.png ../logo.jpg ../logo.*.jpg \
             ../logo.jpeg ../logo.*.jpeg ../logo.webp ../logo.*.webp; do
-            cp "$f" "${DIR}/$(basename "$f")"
+            # `nullglob` only elides a wildcard pattern that matched nothing; the bare names in
+            # this list (`../logo.svg`) have no wildcard, so they survive it and still need this
+            # check when the plugin does not ship that format.
+            [ -f "$f" ] && cp "$f" "${DIR}/$(basename "$f")"
           done
           shopt -u nullglob
 
