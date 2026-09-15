@@ -111,3 +111,8 @@ jobs:
       tag: ${{ needs.check.outputs.tag }}
     permissions:
       contents: write
+    # Secrets do not flow through nested reusable-workflow calls on their own: `release.yml`
+    # passes `secrets: inherit` on to `marketplace.yml`, but it can only pass on what it was
+    # given here. Without this line the marketplace credentials are empty two levels down and
+    # the publish job skips the pull request with only a warning, so the run still shows green.
+    secrets: inherit
