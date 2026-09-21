@@ -8,7 +8,10 @@ import {
   defineAgent,
   type HostProcesses,
   type JsonValue,
+  type PluginLogger,
+  PluginMethodError,
 } from "@ora-space/plugin-sdk";
+import { installLogger, logger } from "../services/log.ts";
 
 /**
  * Carries the process-level facts a plugin instance may need outside any agent session.
@@ -21,6 +24,8 @@ import {
 export interface PluginContext {
   readonly pluginId: string;
   readonly processes: HostProcesses;
+  /** The SDK-owned logger; the host persists its records into this plugin's own log file. */
+  readonly logger: PluginLogger;
 }
 
 /** What the caller of {@link runAgentPlugin} supplies; `processes` is assembled internally. */
@@ -132,56 +137,126 @@ export async function runAgentPlugin(
   options: RunAgentPluginOptions,
 ): Promise<void> {
   const routes = flattenRoutes(plugin);
-  protectProtocolStdout();
 
   const definition = defineAgent({
     start: (startContext, send) =>
-      invoke(routes, AGENT_METHOD_ROUTES.onStart, startContext, send) as
-        | void
-        | Promise<void>,
+      traced(
+        AGENT_METHOD_ROUTES.onStart,
+        () =>
+          invoke(routes, AGENT_METHOD_ROUTES.onStart, startContext, send) as
+            | void
+            | Promise<void>,
+      ),
     stop: () =>
-      invoke(routes, AGENT_METHOD_ROUTES.onStop) as void | Promise<void>,
+      traced(
+        AGENT_METHOD_ROUTES.onStop,
+        () =>
+          invoke(routes, AGENT_METHOD_ROUTES.onStop) as void | Promise<void>,
+      ),
     listModels: (context) =>
-      invoke(routes, AGENT_METHOD_ROUTES.onListModels, context) as
-        | AgentModel[]
-        | Promise<AgentModel[]>,
+      traced(
+        AGENT_METHOD_ROUTES.onListModels,
+        () =>
+          invoke(routes, AGENT_METHOD_ROUTES.onListModels, context) as
+            | AgentModel[]
+            | Promise<AgentModel[]>,
+      ),
     onAcp: (frame) =>
       invoke(routes, AGENT_NOTIFICATION_ROUTES.onAcp, frame) as
         | void
         | Promise<void>,
     effects: plugin.effects,
   });
+  // The SDK logger exists from here on; adopt it before anything else can log, and route the
+  // console through it now rather than at `run()`, because activation happens first and stdout
+  // is the protocol channel.
+  installLogger(definition.logger);
+  protectProtocolStdout(definition.logger);
+  const log = logger("plugin");
+  log.info("plugin process starting", {
+    context: {
+      pluginId: options.pluginId,
+      deno: Deno.version.deno,
+      os: Deno.build.os,
+      arch: Deno.build.arch,
+      effects: plugin.effects?.resources.map((resource) =>
+        resource.workspaceRelativePath
+      ) ?? [],
+    },
+  });
+
   const processes = createHostProcesses(definition);
-  await plugin.onActivate({ pluginId: options.pluginId, processes });
+  await plugin.onActivate({
+    pluginId: options.pluginId,
+    processes,
+    logger: definition.logger,
+  });
 
   try {
     await definition.run();
+    log.info("host connection closed; plugin process shutting down");
+  } catch (error) {
+    log.error("plugin run loop failed", { error });
+    throw error;
   } finally {
     await plugin.onDeactivate();
   }
 }
 
 /**
- * Sends every console method to stderr before any plugin code can run.
+ * Logs one host method call's start, duration, and outcome around the routed handler.
+ *
+ * Failures are logged at `warn` rather than `error`: an `AGENT_NOT_INSTALLED` answer is expected
+ * local configuration from the host's point of view, and the host decides what to do with the
+ * error code itself. The record carries the message and code, never the params, which for
+ * `agent/start` include environment details the log has no business persisting.
+ */
+async function traced<T>(
+  method: string,
+  run: () => T | Promise<T>,
+): Promise<T> {
+  const log = logger("host-call");
+  const startedAt = performance.now();
+  log.debug(`${method} received`, { method });
+  try {
+    const result = await run();
+    log.info(`${method} completed`, {
+      method,
+      context: { durationMs: Math.round(performance.now() - startedAt) },
+    });
+    return result;
+  } catch (error) {
+    log.warn(`${method} failed`, {
+      method,
+      context: {
+        durationMs: Math.round(performance.now() - startedAt),
+        code: error instanceof PluginMethodError ? error.code : undefined,
+      },
+      error,
+    });
+    throw error;
+  }
+}
+
+/**
+ * Routes every console method through the plugin logger before any plugin code can run.
  *
  * The SDK does the same when `run()` starts, but activation happens before that, and stdout is
  * the binary protocol channel: a single `console.log` in `onActivate` would be read by the host
- * as a corrupt frame and take the whole plugin down.
+ * as a corrupt frame and take the whole plugin down. The mapping matches the SDK's own so the
+ * persisted level of a `console.*` call does not depend on when it was made.
  */
-function protectProtocolStdout(): void {
-  const encoder = new TextEncoder();
-  const write = (level: string, values: unknown[]) => {
-    const rendered = values
+function protectProtocolStdout(log: PluginLogger): void {
+  const console_ = log.child({ target: "console" });
+  const render = (values: unknown[]) =>
+    values
       .map((value) => (typeof value === "string" ? value : Deno.inspect(value)))
       .join(" ");
-    Deno.stderr.writeSync(encoder.encode(`[plugin:${level}] ${rendered}
-`));
-  };
-  console.debug = (...values: unknown[]) => write("debug", values);
-  console.info = (...values: unknown[]) => write("info", values);
-  console.log = (...values: unknown[]) => write("log", values);
-  console.warn = (...values: unknown[]) => write("warn", values);
-  console.error = (...values: unknown[]) => write("error", values);
+  console.debug = (...values: unknown[]) => console_.debug(render(values));
+  console.info = (...values: unknown[]) => console_.info(render(values));
+  console.log = (...values: unknown[]) => console_.info(render(values));
+  console.warn = (...values: unknown[]) => console_.warn(render(values));
+  console.error = (...values: unknown[]) => console_.error(render(values));
 }
 
 /**

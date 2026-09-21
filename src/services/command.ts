@@ -8,6 +8,9 @@ import {
   spawnAgentProcess,
 } from "@ora-space/plugin-sdk";
 import { bundledAdapterPath } from "./bundled-binary.ts";
+import { logger } from "./log.ts";
+
+const log = logger("command");
 
 /** The npm bin name of the ACP adapter that fronts Claude Code. */
 const BINARY_NAME = "claude-agent-acp";
@@ -65,6 +68,9 @@ export function spawnClaude(
 ): Promise<HostChildProcess> {
   const pinned = readEnv(BIN_ENV_VAR)?.trim();
   if (pinned !== undefined && pinned !== "") {
+    log.info("spawning the pinned adapter", {
+      context: { cwd: invocation.cwd, command: pinned, pin: BIN_ENV_VAR },
+    });
     return spawnPinned(processes, pinned, invocation);
   }
   return spawnResolved(processes, invocation);
@@ -85,16 +91,31 @@ async function spawnResolved(
   invocation: AgentInvocation,
 ): Promise<HostChildProcess> {
   const candidates = resolveClaudeCommands();
+  const packageCommand = bundledAdapterPath();
+  log.info("spawning the adapter", {
+    context: {
+      cwd: invocation.cwd,
+      packageCommand,
+      pathCandidates: candidates,
+    },
+  });
   try {
-    return await spawnAgentProcess(
+    const child = await spawnAgentProcess(
       processes,
-      { packageCommand: bundledAdapterPath(), command: candidates },
+      { packageCommand, command: candidates },
       invocation,
     );
+    log.info("adapter spawned", {
+      context: { cwd: invocation.cwd, pid: child.pid },
+    });
+    return child;
   } catch (error) {
     if (
       error instanceof PluginMethodError && error.code === AGENT_NOT_INSTALLED
     ) {
+      log.warn("no adapter found in the package or on PATH", {
+        context: { packageCommand, pathCandidates: candidates },
+      });
       throw new PluginMethodError(
         AGENT_NOT_INSTALLED,
         `Claude Code's ACP adapter is not installed or not on PATH (tried: ${
@@ -123,6 +144,9 @@ async function spawnPinned(
     if (
       error instanceof HostRequestError && error.kind === "program_not_found"
     ) {
+      log.warn("the pinned adapter does not exist", {
+        context: { command, pin: BIN_ENV_VAR },
+      });
       throw new PluginMethodError(
         AGENT_NOT_INSTALLED,
         `${BIN_ENV_VAR} points at ${command}, which does not exist`,

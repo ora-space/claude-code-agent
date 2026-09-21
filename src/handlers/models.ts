@@ -6,6 +6,9 @@ import type {
 import { INVALID_PARAMS, PluginMethodError } from "@ora-space/plugin-sdk";
 import { AcpProbe } from "../services/acp-probe.ts";
 import { spawnClaude } from "../services/command.ts";
+import { logger } from "../services/log.ts";
+
+const log = logger("models");
 
 /** The ACP revision this plugin speaks; the same one Ora declares on its own connection. */
 const ACP_PROTOCOL_VERSION = 1;
@@ -62,6 +65,7 @@ export function listClaudeModels(
   cwd: string,
 ): Promise<AgentModel[]> {
   if (typeof cwd !== "string" || cwd.trim() === "") {
+    log.warn("agent/list_models refused: no workspace cwd");
     throw new PluginMethodError(
       INVALID_PARAMS,
       "agent/list_models requires the cwd of the workspace to discover models for",
@@ -69,17 +73,37 @@ export function listClaudeModels(
   }
   const cached = catalogs.get(cwd);
   if (cached !== undefined && cached.expiresAt > Date.now()) {
+    log.debug("model catalog served from cache", {
+      context: { cwd, expiresInMs: cached.expiresAt - Date.now() },
+    });
     return cached.models;
   }
+  log.info("discovering models with a one-shot adapter", { context: { cwd } });
+  const startedAt = Date.now();
   const models = discoverModels(processes, cwd);
   catalogs.set(cwd, { models, expiresAt: Date.now() + CATALOG_TTL_MS });
   // A failure is not an answer worth reusing: an adapter that was still starting, or a provider
   // the user is in the middle of configuring, must not keep the picker broken for the whole window.
-  void models.catch(() => {
-    if (catalogs.get(cwd)?.models === models) {
-      catalogs.delete(cwd);
-    }
-  });
+  void models.then(
+    (discovered) => {
+      log.info("model discovery completed", {
+        context: {
+          cwd,
+          durationMs: Date.now() - startedAt,
+          models: discovered.map((model) => model.id),
+        },
+      });
+    },
+    (error) => {
+      log.warn("model discovery failed; catalog not cached", {
+        context: { cwd, durationMs: Date.now() - startedAt },
+        error,
+      });
+      if (catalogs.get(cwd)?.models === models) {
+        catalogs.delete(cwd);
+      }
+    },
+  );
   return models;
 }
 
@@ -143,7 +167,10 @@ async function deleteProbeSession(
   try {
     await probe.request("session/delete", { sessionId });
   } catch (error) {
-    console.debug(`probe session ${sessionId} was not deleted: ${error}`);
+    log.debug("probe session was not deleted", {
+      context: { sessionId },
+      error,
+    });
   }
 }
 

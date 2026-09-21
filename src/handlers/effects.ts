@@ -7,7 +7,10 @@ import type {
 } from "@ora-space/plugin-sdk";
 import { PluginMethodError, SKILL_DIRECTORY_V1 } from "@ora-space/plugin-sdk";
 import type { ClaudeClient } from "../services/claude-client.ts";
+import { logger } from "../services/log.ts";
 import { invalidateClaudeModels } from "./models.ts";
+
+const log = logger("effects");
 
 /**
  * The Skill surface Claude Code reads: a project-relative `.claude/skills/<name>/SKILL.md` tree.
@@ -93,9 +96,15 @@ export class SkillEffectCoordinator {
     }
     if (this.#held !== undefined) {
       this.#held.push(frame);
+      log.info("new turn held behind the Skill barrier", {
+        context: { turnId: id, held: this.#held.length },
+      });
       return true;
     }
     this.#openTurns.add(id);
+    log.debug("turn opened", {
+      context: { turnId: id, openTurns: this.#openTurns.size },
+    });
     return false;
   }
 
@@ -111,7 +120,11 @@ export class SkillEffectCoordinator {
     if (typeof id !== "string" && typeof id !== "number") {
       return;
     }
-    this.#openTurns.delete(id);
+    if (this.#openTurns.delete(id)) {
+      log.debug("turn resolved", {
+        context: { turnId: id, openTurns: this.#openTurns.size },
+      });
+    }
   }
 
   /**
@@ -128,14 +141,36 @@ export class SkillEffectCoordinator {
   async #coordinate(
     context: AgentEffectCoordinationContext,
   ): Promise<JsonValue> {
+    const repeated = this.#held !== undefined;
     this.#held ??= [];
-    const deadline = Date.now() + QUIESCE_TIMEOUT_MS;
+    log.info(
+      repeated
+        ? "effect/coordinate repeated; barrier already engaged"
+        : "effect/coordinate engaged the Skill barrier",
+      {
+        method: "effect/coordinate",
+        context: {
+          targetId: context.targetId,
+          openTurns: this.#openTurns.size,
+        },
+      },
+    );
+    const startedAt = Date.now();
+    const deadline = startedAt + QUIESCE_TIMEOUT_MS;
     while (this.#openTurns.size > 0) {
       if (Date.now() >= deadline) {
         // Ora only reactivates Targets whose coordination succeeded, so a barrier abandoned here
         // would hold its queued prompts for the life of the process. Release before failing, and
         // let the next reconcile attempt engage a fresh one.
         const stranded = this.#openTurns.size;
+        log.warn("effect/coordinate gave up waiting for in-flight turns", {
+          method: "effect/coordinate",
+          context: {
+            targetId: context.targetId,
+            stranded,
+            waitedMs: Date.now() - startedAt,
+          },
+        });
         await this.#release();
         throw new PluginMethodError(
           CONSUMER_NOT_READY,
@@ -144,6 +179,13 @@ export class SkillEffectCoordinator {
       }
       await new Promise((resolve) => setTimeout(resolve, QUIESCE_POLL_MS));
     }
+    log.info("Skill Target is safe to mutate", {
+      method: "effect/coordinate",
+      context: {
+        targetId: context.targetId,
+        waitedMs: Date.now() - startedAt,
+      },
+    });
     return { targetId: context.targetId, state: "safe_to_mutate" };
   }
 
@@ -159,14 +201,31 @@ export class SkillEffectCoordinator {
     context: AgentEffectCoordinationContext,
   ): Promise<JsonValue> {
     if (this.#held === undefined) {
+      log.info("effect/reactivate repeated; nothing held, adapter left as is", {
+        method: "effect/reactivate",
+        context: { targetId: context.targetId },
+      });
       return { targetId: context.targetId, state: "reactivated" };
     }
     const cwd = this.#cwd();
+    log.info("effect/reactivate restarting the adapter to rescan Skills", {
+      method: "effect/reactivate",
+      context: { targetId: context.targetId, cwd, held: this.#held.length },
+    });
     if (cwd !== undefined) {
       invalidateClaudeModels(cwd);
       await this.#client.start(cwd);
+    } else {
+      log.warn("effect/reactivate has no workspace to restart the adapter in", {
+        method: "effect/reactivate",
+        context: { targetId: context.targetId },
+      });
     }
     await this.#release();
+    log.info("Skill barrier released", {
+      method: "effect/reactivate",
+      context: { targetId: context.targetId },
+    });
     return { targetId: context.targetId, state: "reactivated" };
   }
 
@@ -181,17 +240,33 @@ export class SkillEffectCoordinator {
    */
   #verifyReady(context: AgentEffectReadinessContext): JsonValue {
     if (!this.#client.running) {
+      log.info("effect/verify_ready: not ready, adapter not running", {
+        method: "effect/verify_ready",
+        context: { targetId: context.targetId },
+      });
       throw new PluginMethodError(
         CONSUMER_NOT_READY,
         "the Claude Code adapter is not running, so it has read no Skills",
       );
     }
     if (this.#held !== undefined) {
+      log.info("effect/verify_ready: not ready, barrier still engaged", {
+        method: "effect/verify_ready",
+        context: { targetId: context.targetId, held: this.#held.length },
+      });
       throw new PluginMethodError(
         CONSUMER_NOT_READY,
         "Claude Code is quiesced for a Skill mutation and has not rescanned yet",
       );
     }
+    log.info("effect/verify_ready: ready", {
+      method: "effect/verify_ready",
+      context: {
+        targetId: context.targetId,
+        generation: context.generation,
+        consumerRevisionId: context.consumerRevisionId,
+      },
+    });
     return {
       targetId: context.targetId,
       generation: context.generation,
@@ -208,12 +283,19 @@ export class SkillEffectCoordinator {
    * pass instead of being stranded behind a barrier that is about to come down.
    */
   async #release(): Promise<void> {
+    let replayed = 0;
     while (this.#held !== undefined && this.#held.length > 0) {
       const frame = this.#held.shift();
       if (frame !== undefined) {
         await this.#client.writeAcp(frame);
+        replayed += 1;
       }
     }
     this.#held = undefined;
+    if (replayed > 0) {
+      log.info("replayed held turns into the adapter", {
+        context: { replayed },
+      });
+    }
   }
 }

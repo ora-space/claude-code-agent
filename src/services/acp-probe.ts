@@ -1,6 +1,11 @@
 import type { HostChildProcess, JsonValue } from "@ora-space/plugin-sdk";
 import { METHOD_NOT_FOUND } from "@ora-space/plugin-sdk";
+import { logger } from "./log.ts";
 import { decodeLines, encodeLine } from "./ndjson.ts";
+
+const log = logger("acp-probe");
+/** The probe adapter's own stderr, kept at debug: discovery runs often and usually succeeds. */
+const probeLog = logger("claude-agent-acp.probe");
 
 /**
  * How long one whole probe conversation may take before it is abandoned.
@@ -177,7 +182,10 @@ export class AcpProbe {
         },
       });
     } catch (error) {
-      console.debug(`probe could not refuse ${method}: ${describe(error)}`);
+      log.debug("probe could not refuse a client method", {
+        context: { method },
+        error,
+      });
     }
   }
 
@@ -194,7 +202,9 @@ export class AcpProbe {
         try {
           frame = JSON.parse(line) as JsonValue;
         } catch {
-          console.debug(`probe dropped a non-JSON stdout line: ${line}`);
+          log.debug("probe dropped a non-JSON stdout line", {
+            context: { line: line.slice(0, 512) },
+          });
           continue;
         }
         this.#dispatch(frame);
@@ -215,7 +225,7 @@ export class AcpProbe {
     try {
       for await (const line of decodeLines(this.#child.stderr)) {
         if (line.length > 0) {
-          console.debug(`[claude:probe] ${line}`);
+          probeLog.debug(line);
         }
       }
     } catch {

@@ -1,6 +1,9 @@
 import type { JsonValue } from "@ora-space/plugin-sdk";
 import type { SkillEffectCoordinator } from "./effects.ts";
 import type { ClaudeClient } from "../services/claude-client.ts";
+import { logger } from "../services/log.ts";
+
+const log = logger("acp");
 
 /**
  * Serves the `agent/acp` notification by piping one host frame into the adapter verbatim.
@@ -22,11 +25,32 @@ export function forwardAcpFrame(
   frame: JsonValue,
 ): Promise<void> | void {
   if (effects.intercept(frame)) {
+    log.debug("host ACP frame held behind the Skill barrier", {
+      context: summarize(frame),
+    });
     return;
   }
   if (!client.running) {
-    console.warn("dropping ACP frame: the Claude agent is not running");
+    log.warn("dropping host ACP frame: the Claude agent is not running", {
+      context: summarize(frame),
+    });
     return;
   }
+  log.debug("host ACP frame forwarded to the adapter", {
+    context: summarize(frame),
+  });
   return client.writeAcp(frame);
+}
+
+/** The envelope fields of one frame that are safe to log: never its params or result. */
+function summarize(frame: JsonValue): Record<string, unknown> {
+  if (typeof frame !== "object" || frame === null || Array.isArray(frame)) {
+    return { shape: typeof frame };
+  }
+  return {
+    method: typeof frame.method === "string" ? frame.method : undefined,
+    id: typeof frame.id === "string" || typeof frame.id === "number"
+      ? frame.id
+      : undefined,
+  };
 }

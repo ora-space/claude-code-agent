@@ -7,8 +7,8 @@ easy to get wrong and expensive to rediscover. It follows the same shape as the
 sibling `codeagent-agent/AGENTS.md` and `opencode-agent/AGENTS.md` — this
 package used to lag them on an older SDK pin (`0.3.0`, no `HostProcesses`,
 `waitForIdle`/`restart` Effect Surfaces, camelCase `agent/listModels`) until it
-was migrated onto `0.9.0` to match; see the root `../AGENTS.md` for the general
-rule this migration exists to satisfy.
+was migrated onto `0.9.0` to match and now tracks `0.10.0`; see the root
+`../AGENTS.md` for the general rule this migration exists to satisfy.
 
 ## This is an agent plugin, and an agent plugin implements the whole SDK contract
 
@@ -345,10 +345,10 @@ a start/stop cycle around a picker opening makes the next open pay full price.
 
 ## Protocol hygiene
 
-- **stdout is the binary protocol channel.** `protectProtocolStdout()` redirects
-  every `console` method to stderr before any plugin code runs. A single
-  `console.log` reaching stdout is read by the host as a corrupt frame and takes
-  the plugin down.
+- **stdout is the binary protocol channel.** `protectProtocolStdout()` routes
+  every `console` method through the plugin logger before any plugin code runs.
+  A single `console.log` reaching stdout is read by the host as a corrupt frame
+  and takes the plugin down.
 - **ACP payloads are never parsed** on the bridge. Frames are re-framed between
   Ora's binary envelope and the adapter's NDJSON and otherwise passed through
   verbatim — this is also what lets Claude Code's ACP extensions (session modes,
@@ -360,6 +360,26 @@ a start/stop cycle around a picker opening makes the next open pay full price.
   quietly by Ora as expected local configuration; `AGENT_UNUSABLE` (`-32002`) is
   reported once and not retried; `-32000` is how an Effect Consumer says "not
   ready right now".
+
+## Logging
+
+Everything this plugin says goes through the SDK's `plugin.logger`, which writes
+`@ora/plugin-log/v1` envelopes to stderr; the host persists them into this
+plugin's own log file, filtered by the per-plugin level the user picks in Ora's
+developer settings. `src/services/log.ts` is the one seam: `logger(target)`
+returns a child logger for a component, and `installLogger` adopts the SDK-owned
+instance the moment `runAgentPlugin` has built it, so records written during
+construction still reach stderr in the same format rather than stdout.
+
+Targets are how a `plugin.log` is read: `plugin` (activation, start/stop,
+deactivation), `host-call` (every `agent/*` method with duration and outcome),
+`lifecycle`, `acp` (frame envelopes only — `method` and `id`, never `params`),
+`claude-client` (spawn, pid, exit, pipe failures), `claude-agent-acp` (the live
+adapter's own stderr, one record per line at `info`), `effects` (barrier, drain,
+restart, readiness), `models` and `acp-probe` (discovery; the probe adapter's
+stderr is `claude-agent-acp.probe` at `debug`), and `command` (which adapter was
+resolved and how). ACP payloads are never logged: a `session/prompt` carries the
+user's text, and the log has no business keeping it.
 
 ## Manifest
 

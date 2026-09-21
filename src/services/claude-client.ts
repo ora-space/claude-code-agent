@@ -1,6 +1,11 @@
 import type { HostProcesses, JsonValue } from "@ora-space/plugin-sdk";
 import { spawnClaude } from "./command.ts";
+import { logger } from "./log.ts";
 import { decodeLines, encodeLine } from "./ndjson.ts";
+
+const log = logger("claude-client");
+/** The adapter's own stderr, republished line by line under its own target. */
+const adapterLog = logger("claude-agent-acp");
 
 /** The subset of a spawned child process this bridge depends on, so tests can substitute one. */
 export interface SpawnedProcess {
@@ -78,14 +83,25 @@ export class ClaudeClient {
    * the same host connection.
    */
   async start(cwd: string): Promise<void> {
+    const restarting = this.#running !== undefined;
     await this.stop();
     this.#expectedExit = false;
 
+    log.info(restarting ? "restarting the adapter" : "starting the adapter", {
+      context: { cwd },
+    });
     // Failures are already classified for Ora by `spawnClaude`: an adapter this machine does not
     // have stays retryable, while a pin naming a missing executable says so by name.
-    const process = await this.#spawn(cwd);
+    let process: SpawnedProcess;
+    try {
+      process = await this.#spawn(cwd);
+    } catch (error) {
+      log.warn("the adapter could not be spawned", { context: { cwd }, error });
+      throw error;
+    }
     this.#running = { process, stdinWriter: process.stdin.getWriter() };
     this.#attach(process);
+    log.info("adapter running", { context: { cwd, pid: process.pid } });
   }
 
   /**
@@ -99,7 +115,15 @@ export class ClaudeClient {
     if (running === undefined) {
       throw new Error("the Claude agent is not running");
     }
-    await running.stdinWriter.write(encodeLine(JSON.stringify(frame)));
+    try {
+      await running.stdinWriter.write(encodeLine(JSON.stringify(frame)));
+    } catch (error) {
+      log.warn("writing an ACP frame to the adapter failed", {
+        context: { pid: running.process.pid },
+        error,
+      });
+      throw error;
+    }
   }
 
   /** Kills the adapter and releases every pipe; idempotent when already stopped. */
@@ -108,8 +132,10 @@ export class ClaudeClient {
     this.#running = undefined;
     this.#expectedExit = true;
     if (running === undefined) {
+      log.debug("stop requested with no adapter running");
       return;
     }
+    log.info("stopping the adapter", { context: { pid: running.process.pid } });
     try {
       await running.stdinWriter.close();
     } catch {
@@ -132,11 +158,20 @@ export class ClaudeClient {
       // must never clear the new process's tracking or fire `onExited` regardless of the shared
       // `#expectedExit` flag, which by then reflects the newer generation's intent, not this one's.
       if (this.#running?.process !== process) {
+        log.debug("a superseded adapter generation exited", {
+          context: { pid: process.pid },
+        });
         return;
       }
       this.#running = undefined;
-      if (!this.#expectedExit) {
-        console.warn("claude-agent-acp exited unexpectedly");
+      if (this.#expectedExit) {
+        log.info("adapter exited after stop", {
+          context: { pid: process.pid },
+        });
+      } else {
+        log.warn("claude-agent-acp exited unexpectedly", {
+          context: { pid: process.pid },
+        });
         this.#onExited();
       }
     });
@@ -156,32 +191,56 @@ export class ClaudeClient {
         try {
           frame = JSON.parse(line) as JsonValue;
         } catch {
-          console.warn(`dropping non-JSON stdout line: ${line}`);
+          // The line itself is logged: it is the adapter's own output on its protocol channel,
+          // and the only clue to what went wrong with the pairing.
+          log.warn("dropping a non-JSON stdout line from the adapter", {
+            context: { pid: process.pid, line: line.slice(0, 512) },
+          });
           continue;
         }
         if (
           frame === null || typeof frame !== "object" || Array.isArray(frame)
         ) {
-          console.warn("dropping non-object ACP frame from claude-agent-acp");
+          log.warn("dropping a non-object ACP frame from the adapter", {
+            context: { pid: process.pid },
+          });
           continue;
         }
+        log.debug("adapter ACP frame received", {
+          context: { pid: process.pid, ...summarize(frame) },
+        });
         this.#onAcpFrame(frame);
       }
+      log.debug("adapter stdout reached EOF", {
+        context: { pid: process.pid },
+      });
     } catch (error) {
-      console.warn(`claude-agent-acp stdout read failed: ${error}`);
+      log.warn("claude-agent-acp stdout read failed", {
+        context: { pid: process.pid },
+        error,
+      });
     }
   }
 
-  /** Republishes the adapter's diagnostics on this plugin's stderr, which Ora logs. */
+  /**
+   * Republishes the adapter's diagnostics into this plugin's log, one record per line.
+   *
+   * The adapter is a third party whose stderr severity this plugin cannot know, so every line is
+   * recorded at `info` under its own target rather than guessed at; the host's per-plugin level
+   * decides whether it is kept.
+   */
   async #pumpStderr(process: SpawnedProcess): Promise<void> {
     try {
       for await (const line of decodeLines(process.stderr)) {
         if (line.length > 0) {
-          console.error(`[claude] ${line}`);
+          adapterLog.info(line, { context: { pid: process.pid } });
         }
       }
     } catch (error) {
-      console.warn(`claude-agent-acp stderr read failed: ${error}`);
+      log.warn("claude-agent-acp stderr read failed", {
+        context: { pid: process.pid },
+        error,
+      });
     }
   }
 
@@ -210,4 +269,17 @@ export class ClaudeClient {
       exited: child.exited.then(() => undefined),
     };
   }
+}
+
+/** The envelope fields of one frame that are safe to log: never its params or result. */
+function summarize(frame: JsonValue): Record<string, unknown> {
+  if (typeof frame !== "object" || frame === null || Array.isArray(frame)) {
+    return {};
+  }
+  return {
+    method: typeof frame.method === "string" ? frame.method : undefined,
+    id: typeof frame.id === "string" || typeof frame.id === "number"
+      ? frame.id
+      : undefined,
+  };
 }

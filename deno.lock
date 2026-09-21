@@ -1,11 +1,12 @@
 {
   "version": "5",
   "specifiers": {
-    "jsr:@ora-space/plugin-sdk@0.9.0": "0.9.0",
+    "jsr:@ora-space/plugin-sdk@0.10.0": "0.10.0",
     "jsr:@std/assert@1": "1.0.19",
     "jsr:@std/cli@^1.0.32": "1.0.32",
     "jsr:@std/crypto@^1.0.5": "1.1.0",
     "jsr:@std/encoding@^1.0.10": "1.0.11",
+    "jsr:@std/fmt@^1.0.10": "1.0.10",
     "jsr:@std/internal@^1.0.12": "1.0.14",
     "jsr:@std/internal@^1.0.14": "1.0.14",
     "jsr:@std/path@^1.1.6": "1.1.6",
@@ -14,8 +15,8 @@
     "jsr:@zip-js/zip-js@^2.8.61": "2.9.0"
   },
   "jsr": {
-    "@ora-space/plugin-sdk@0.9.0": {
-      "integrity": "667d812ea8ec87b0976f2bc6ed00e9915e7fa170e3f3793ad46e4087e36cdcfd"
+    "@ora-space/plugin-sdk@0.10.0": {
+      "integrity": "f678d20ea69f3da2a692faa174743818806c95b998ae23e5b11284c7a6d37c94"
     },
     "@std/assert@1.0.19": {
       "integrity": "eaada96ee120cb980bc47e040f82814d786fe8162ecc53c91d8df60b8755991e",
@@ -24,13 +25,20 @@
       ]
     },
     "@std/cli@1.0.32": {
-      "integrity": "188b3a100d6202d64e3f5bd3d799c7fa4f6d77f92cc65eb7f641c1fa0aa92a66"
+      "integrity": "188b3a100d6202d64e3f5bd3d799c7fa4f6d77f92cc65eb7f641c1fa0aa92a66",
+      "dependencies": [
+        "jsr:@std/fmt",
+        "jsr:@std/internal@^1.0.14"
+      ]
     },
     "@std/crypto@1.1.0": {
       "integrity": "b8d6d0a6377a32b213af2661ed7bf1062d94feac0c57def5526a8e74a95c3ec8"
     },
     "@std/encoding@1.0.11": {
       "integrity": "e7cef2f0b3153bccc17431e7c864a1de03a4b6d9647389c43e08aaa775d37385"
+    },
+    "@std/fmt@1.0.10": {
+      "integrity": "90dfba288802ac6de82fb31d0917eb9e4450b9925b954d5e51fc29ac07419db5"
     },
     "@std/internal@1.0.14": {
       "integrity": "291516b3d4c35024d6ffbc0a9df5bf4c64116e05b50012cf846710152d2ffdf7"
@@ -56,7 +64,7 @@
   },
   "workspace": {
     "dependencies": [
-      "jsr:@ora-space/plugin-sdk@0.9.0",
+      "jsr:@ora-space/plugin-sdk@0.10.0",
       "jsr:@std/assert@1",
       "jsr:@std/cli@^1.0.32",
       "jsr:@std/crypto@^1.0.5",
