@@ -39,6 +39,15 @@
       "binary": "claude",
       "size": 252755128,
       "sha256": "8968405e26db478af44eabc4635ab5ca557057b702a54460a59c13e1b253e978"
+    },
+    "linux-arm64": {
+      "name": "@anthropic-ai/claude-agent-sdk-linux-arm64",
+      "version": "0.3.293",
+      "integrity": "sha512-B3M5gw6pPH/ckMtrLtGg4ZY1adLVnPoXkEV+Ruu0j/gdFzwuLWR64Spa0RCsbo7BXVN6w5NTqkuZk+HBfsPUZA==",
+      "tarball": "https://registry.npmjs.org/@anthropic-ai/claude-agent-sdk-linux-arm64/-/claude-agent-sdk-linux-arm64-0.3.293.tgz",
+      "binary": "claude",
+      "size": 252108792,
+      "sha256": "a43629e888f0a7d96c5e8de62abf44852433a7ff2481574688db3e5b6399491f"
     }
   }
 }

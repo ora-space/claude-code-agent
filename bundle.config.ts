@@ -12,9 +12,9 @@ import {
  *
  * Every entry in `targets` produces one `.orax`, and a target absent here is simply not published,
  * because Ora refuses to install a package built for another triple. The set is bounded by what
- * the adapter can be compiled for rather than by what Claude Code ships: the native CLI is
- * published for eight platforms, Bun cross-compiles to five of them, and `windows-arm64` — which
- * Claude Code does ship — has no Bun target at all.
+ * both halves exist for: the native CLI is published for eight platforms and Bun can cross-compile
+ * the adapter for every one of them, so a platform absent here — `windows-arm64`, `darwin-x64`,
+ * the musl builds — is left out by choice rather than for want of a binary.
  *
  * The three names in each entry are three spellings of one platform that no single tool agrees
  * on, which is exactly why they are written down together rather than derived: `triple` is what
@@ -38,6 +38,11 @@ export default {
       os: "linux",
       npm: "linux-x64",
       bun: "bun-linux-x64",
+    },
+    "aarch64-unknown-linux-gnu": {
+      os: "linux",
+      npm: "linux-arm64",
+      bun: "bun-linux-arm64",
     },
   },
   adapterPath: bundledAdapterPath,
