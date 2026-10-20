@@ -1,5 +1,12 @@
-import type { AgentStartContext } from "@ora-space/plugin-sdk";
-import { INVALID_PARAMS, PluginMethodError } from "@ora-space/plugin-sdk";
+import type {
+  AgentModelApplied,
+  AgentStartContext,
+} from "@ora-space/plugin-sdk";
+import {
+  AGENT_UNUSABLE,
+  INVALID_PARAMS,
+  PluginMethodError,
+} from "@ora-space/plugin-sdk";
 import type { ClaudeClient } from "../services/claude-client.ts";
 import { logger } from "../services/log.ts";
 
@@ -15,7 +22,7 @@ const log = logger("lifecycle");
 export async function startClaude(
   client: ClaudeClient,
   context: AgentStartContext,
-): Promise<void> {
+): Promise<void | AgentModelApplied> {
   if (context.cwd.trim() === "") {
     log.warn("agent/start refused: empty cwd");
     throw new PluginMethodError(
@@ -23,10 +30,32 @@ export async function startClaude(
       "agent/start requires a non-empty cwd",
     );
   }
-  await client.start(context.cwd);
+  try {
+    client.setModelContext(context.modelContext);
+    await client.start(context.cwd);
+  } catch (error) {
+    await client.stop();
+    if (context.modelContext) {
+      throw new PluginMethodError(
+        error instanceof PluginMethodError && error.code === AGENT_UNUSABLE
+          ? AGENT_UNUSABLE
+          : INVALID_PARAMS,
+        "claude_model_adapter_failed",
+      );
+    }
+    throw error;
+  }
   log.info("Claude ACP adapter started for agent/start", {
     context: { cwd: context.cwd },
   });
+  const frozen = context.modelContext?.configuration;
+  if (frozen) {
+    return {
+      adapterVersion: frozen.adapterVersion,
+      declarationFingerprint: frozen.declarationFingerprint,
+      configurationRevision: frozen.configurationRevision,
+    };
+  }
 }
 
 /**

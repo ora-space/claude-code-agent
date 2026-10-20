@@ -1,5 +1,6 @@
 import {
   AGENT_NOT_INSTALLED,
+  AGENT_UNUSABLE,
   type AgentInvocation,
   type HostChildProcess,
   type HostProcesses,
@@ -74,6 +75,24 @@ export function spawnClaude(
     return spawnPinned(processes, pinned, invocation);
   }
   return spawnResolved(processes, invocation);
+}
+
+/** A frozen execution must use its verified package, never a host pin or PATH fallback. */
+export async function spawnClaudeModel(
+  processes: HostProcesses,
+  invocation: AgentInvocation,
+): Promise<HostChildProcess> {
+  try {
+    return await processes.spawn({
+      packageCommand: bundledAdapterPath(),
+      ...invocation,
+    });
+  } catch {
+    throw new PluginMethodError(
+      AGENT_UNUSABLE,
+      "The frozen package's bundled adapter cannot run",
+    );
+  }
 }
 
 /**

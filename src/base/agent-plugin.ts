@@ -3,6 +3,7 @@ import {
   AGENT_METHODS,
   type AgentEffectDefinition,
   type AgentModel,
+  type AgentModelApplied,
   type AgentStartContext,
   createHostProcesses,
   defineAgent,
@@ -93,7 +94,7 @@ export abstract class AgentPlugin {
   abstract onStart(
     context: AgentStartContext,
     send: AcpSender,
-  ): void | Promise<void>;
+  ): void | AgentModelApplied | Promise<void | AgentModelApplied>;
 
   /** [agent/acp] Receives one ACP frame the host is forwarding to the agent. */
   abstract onAcp(frame: JsonValue): void | Promise<void>;
@@ -145,7 +146,8 @@ export async function runAgentPlugin(
         () =>
           invoke(routes, AGENT_METHOD_ROUTES.onStart, startContext, send) as
             | void
-            | Promise<void>,
+            | AgentModelApplied
+            | Promise<void | AgentModelApplied>,
       ),
     stop: () =>
       traced(

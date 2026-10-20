@@ -382,13 +382,12 @@ a start/stop cycle around a picker opening makes the next open pay full price.
   every `console` method through the plugin logger before any plugin code runs.
   A single `console.log` reaching stdout is read by the host as a corrupt frame
   and takes the plugin down.
-- **ACP payloads are never parsed** on the bridge. Frames are re-framed between
-  Ora's binary envelope and the adapter's NDJSON and otherwise passed through
-  verbatim — this is also what lets Claude Code's ACP extensions (session modes,
-  steering, its `_meta` capabilities) reach Ora without this plugin knowing they
-  exist. `handlers/effects.ts` is the one exception, and a deliberately narrow
-  one: it reads `method` and `id` off the envelope to track turns, and never
-  looks at `params`.
+- **ACP routing** stays opaque for legacy starts and unrelated frames. When
+  `modelContext` is present, `services/model-adapter.ts` owns the model/routing
+  fields and safe error envelopes; read
+  [Platform model bindings](README.md#platform-model-bindings) before changing
+  this seam. Effect tracking reads only envelope `method`/`id`. Keep payload
+  values out of logs; private provider diagnostics stay suppressed.
 - **Throw the right error code.** `AGENT_NOT_INSTALLED` (`-32001`) is retried
   quietly by Ora as expected local configuration; `AGENT_UNUSABLE` (`-32002`) is
   reported once and not retried; `-32000` is how an Effect Consumer says "not
