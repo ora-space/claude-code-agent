@@ -31,6 +31,13 @@ const BIN_ENV_VAR = "ORA_CLAUDE_BIN";
  * machine that has it.
  */
 function resolveClaudeCli() {
+  if (process.env.ORA_CLAUDE_PLATFORM_MODEL === "1") {
+    const bundled = join(dirname(process.execPath), CLAUDE_BINARY_NAME);
+    if (!isExecutableFile(bundled) || isUnrunnableHere(bundled)) {
+      throw new Error("platform model requires the bundled CLI");
+    }
+    return { path: bundled, source: "bundled" };
+  }
   const pinned = process.env[BIN_ENV_VAR]?.trim();
   if (pinned) {
     if (!isExecutableFile(pinned)) {

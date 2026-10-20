@@ -57,6 +57,27 @@ takes care of getting Claude Code to pick them up — no manual restart needed.
 | -------------------- | ---------------------------------------------------------------------------- |
 | `ORA_CLAUDE_ACP_BIN` | Pin an exact path to the Claude ACP adapter binary, bypassing `PATH` lookup. |
 
+## Platform model bindings
+
+The SDK 0.11 startup contract can supply one frozen `modelContext`. This mode
+requires the bundled adapter/native CLI pair and a private execution HOME from
+the host. It uses only Anthropic Messages, pins the primary model and every
+model alias, disables fallback, and overrides query settings sources and routing
+before the first prompt. Discovery returns only the bound model. Legacy starts
+omit the context and retain their existing behavior.
+
+The temporary token is supplied only in the child environment. Programmatic
+settings contain no token literal: the pinned SDK serializes them into CLI
+arguments. Provider/authentication replacement and another model are refused;
+private diagnostics are suppressed while protocol error codes remain intact.
+Node owns renewal, revocation and process cleanup. Settings are validated JSON
+text; this declaration currently contributes no additional options.
+
+Declaration packaging remains an explicit `--agent-configuration` opt-in after
+compatible hosts are deployed. Every target and the published static copy must
+contain identical declaration bytes. Keep the default publication gate off
+during host rollout.
+
 ## License
 
 Apache-2.0
