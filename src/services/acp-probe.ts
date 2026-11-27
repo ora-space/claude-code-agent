@@ -10,17 +10,76 @@ const probeLog = logger("claude-agent-acp.probe");
 /**
  * How long one whole probe conversation may take before it is abandoned.
  *
- * Ora allows `agent/list_models` 60 seconds, and a probe has to spawn the adapter and complete an
- * ACP handshake inside that. The budget covers the conversation rather than each request, so a
+ * Ora gives `agent/discover` a deadline (60 seconds today), and discovery caps the conversation
+ * further at that deadline less the cleanup reserve. The budget covers the conversation rather than each request, so a
  * slow `initialize` cannot be followed by an equally slow `session/new` and overrun the host's own
  * deadline — which would fail discovery with a timeout naming the host instead of the adapter.
  */
-const PROBE_BUDGET_MS = 40_000;
+export const PROBE_BUDGET_MS = 40_000;
 
 /** One probe request still waiting for the adapter's answer, keyed by its JSON-RPC id. */
 interface PendingCall {
   resolve: (result: JsonValue) => void;
   reject: (error: Error) => void;
+}
+
+/** One caller waiting in a {@link NotificationRecord} for a notification it has not seen yet. */
+interface NotificationWait {
+  which: (params: JsonValue) => boolean;
+  resolve: (params: JsonValue) => void;
+  reject: (error: Error) => void;
+}
+
+/**
+ * The notifications of one kind a probe has received since the record began, kept until asked.
+ *
+ * Kept rather than handed to a single waiter, because which one is wanted may only be known later:
+ * an agent can report on a session before it answers the `session/new` that names the session.
+ */
+export class NotificationRecord {
+  readonly #seen: JsonValue[] = [];
+  readonly #waits = new Set<NotificationWait>();
+  #ended: Error | undefined;
+
+  constructor(readonly matches: (params: JsonValue) => boolean) {}
+
+  /**
+   * Resolves with the first recorded notification `which` accepts, already received or still to
+   * come. It rejects once the conversation ends without one.
+   */
+  first(which: (params: JsonValue) => boolean): Promise<JsonValue> {
+    const seen = this.#seen.find(which);
+    if (seen !== undefined) {
+      return Promise.resolve(seen);
+    }
+    if (this.#ended !== undefined) {
+      return Promise.reject(this.#ended);
+    }
+    return new Promise((resolve, reject) => {
+      this.#waits.add({ which, resolve, reject });
+    });
+  }
+
+  /** Keeps one notification and hands it to whoever was waiting for one like it. */
+  add(params: JsonValue): void {
+    this.#seen.push(params);
+    for (const wait of [...this.#waits]) {
+      if (wait.which(params)) {
+        this.#waits.delete(wait);
+        wait.resolve(params);
+      }
+    }
+  }
+
+  /** Fails every wait still open; what was already recorded can still be asked for. */
+  end(error: Error): void {
+    this.#ended ??= error;
+    const waits = [...this.#waits];
+    this.#waits.clear();
+    for (const wait of waits) {
+      wait.reject(error);
+    }
+  }
 }
 
 /** A probe conversation that ended without the answer it asked for. */
@@ -48,14 +107,15 @@ export class AcpProbeError extends Error {
 export class AcpProbe {
   readonly #child: HostChildProcess;
   readonly #pending = new Map<number, PendingCall>();
+  readonly #records = new Set<NotificationRecord>();
   readonly #deadline: number;
   #nextId = 1;
   /** Set once the adapter can no longer answer, so later calls fail instead of waiting forever. */
   #ended: Error | undefined;
 
-  private constructor(child: HostChildProcess, budgetMs: number) {
+  private constructor(child: HostChildProcess, deadline: number) {
     this.#child = child;
-    this.#deadline = Date.now() + budgetMs;
+    this.#deadline = deadline;
   }
 
   /**
@@ -68,9 +128,9 @@ export class AcpProbe {
    */
   static attach(
     child: HostChildProcess,
-    budgetMs: number = PROBE_BUDGET_MS,
+    deadline: number = Date.now() + PROBE_BUDGET_MS,
   ): AcpProbe {
-    const probe = new AcpProbe(child, budgetMs);
+    const probe = new AcpProbe(child, deadline);
     void probe.#pumpStdout();
     void probe.#pumpStderr();
     void child.exited.then(({ code, signal }) => {
@@ -83,8 +143,17 @@ export class AcpProbe {
     return probe;
   }
 
-  /** Sends one ACP request and resolves with its result, within the conversation's budget. */
-  async request(method: string, params: JsonValue): Promise<JsonValue> {
+  /**
+   * Sends one ACP request and resolves with its result, within the conversation's deadline.
+   *
+   * `deadline` replaces it for this one request: cleanup after the conversation keeps time of its
+   * own the conversation must not use.
+   */
+  async request(
+    method: string,
+    params: JsonValue,
+    deadline: number = this.#deadline,
+  ): Promise<JsonValue> {
     if (this.#ended !== undefined) {
       throw this.#ended;
     }
@@ -98,7 +167,23 @@ export class AcpProbe {
       this.#pending.delete(id);
       throw new AcpProbeError(`failed to send ${method}: ${describe(error)}`);
     }
-    return await this.#withinBudget(answered, id, method);
+    return await this.#withinDeadline(answered, id, method, deadline);
+  }
+
+  /**
+   * Starts keeping every notification `matches` accepts, from now until the conversation ends.
+   *
+   * Start it before sending the request that provokes them: an agent may notify before it answers.
+   * Responses are never recorded.
+   */
+  record(matches: (params: JsonValue) => boolean): NotificationRecord {
+    const record = new NotificationRecord(matches);
+    if (this.#ended !== undefined) {
+      record.end(this.#ended);
+    } else {
+      this.#records.add(record);
+    }
+    return record;
   }
 
   /** Kills the probed process; idempotent, and safe on one that already exited. */
@@ -113,21 +198,20 @@ export class AcpProbe {
   }
 
   /** Fails one pending call once the conversation's shared deadline passes. */
-  #withinBudget(
+  #withinDeadline(
     answered: Promise<JsonValue>,
     id: number,
     method: string,
+    deadline: number,
   ): Promise<JsonValue> {
-    const remaining = Math.max(0, this.#deadline - Date.now());
+    const remaining = Math.max(0, deadline - Date.now());
     let timer: number | undefined;
     const expiry = new Promise<never>((_, reject) => {
       timer = setTimeout(() => {
         this.#pending.delete(id);
         reject(
           new AcpProbeError(
-            `${method} did not answer within the probe's ${
-              PROBE_BUDGET_MS / 1000
-            }s budget`,
+            `${method} did not answer before the probe's deadline`,
           ),
         );
       }, remaining);
@@ -141,13 +225,16 @@ export class AcpProbe {
       return;
     }
     if (typeof frame.method === "string") {
-      // The agent is asking the probe's client side for something. A probe advertises no client
-      // capabilities and has no user to prompt, so the only honest answer is a refusal — and it
-      // has to be sent, because an ACP request left unanswered stalls the handshake this probe is
-      // in the middle of rather than being quietly forgotten.
       const id = frame.id;
       if (typeof id === "number" || typeof id === "string") {
+        // The agent is asking the probe's client side for something. A probe advertises no
+        // client capabilities and has no user to prompt, so the only honest answer is a refusal —
+        // and it has to be sent, because an ACP request left unanswered stalls the handshake this
+        // probe is in the middle of rather than being quietly forgotten.
         void this.#refuse(id, frame.method);
+      } else {
+        // A notification, such as the command report discovery may be waiting for.
+        this.#notify(frame.params ?? null);
       }
       return;
     }
@@ -168,6 +255,15 @@ export class AcpProbe {
       return;
     }
     call.resolve(frame.result ?? null);
+  }
+
+  /** Hands one notification to every record that keeps its kind. */
+  #notify(params: JsonValue): void {
+    for (const record of this.#records) {
+      if (record.matches(params)) {
+        record.add(params);
+      }
+    }
   }
 
   /** Tells the agent this probe serves no client methods, without failing the conversation. */
@@ -241,6 +337,10 @@ export class AcpProbe {
     for (const call of pending) {
       call.reject(this.#ended);
     }
+    for (const record of this.#records) {
+      record.end(this.#ended);
+    }
+    this.#records.clear();
   }
 }
 

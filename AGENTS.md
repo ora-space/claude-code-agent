@@ -7,7 +7,7 @@ easy to get wrong and expensive to rediscover. It follows the same shape as the
 sibling `codeagent-agent/AGENTS.md` and `opencode-agent/AGENTS.md` — this
 package used to lag them on an older SDK pin (`0.3.0`, no `HostProcesses`,
 camelCase `agent/listModels`) until it was migrated onto `0.9.0` to match and
-now tracks `0.10.0`; see the root `../AGENTS.md` for the general rule this
+now tracks `0.12.0`; see the root `../AGENTS.md` for the general rule this
 migration exists to satisfy.
 
 ## This is an agent plugin, and an agent plugin implements the whole SDK contract
@@ -23,7 +23,7 @@ feature currently exercises:
 | SDK surface                   | Where it is mounted                             | What is lost by omitting it                                                  |
 | ----------------------------- | ----------------------------------------------- | ---------------------------------------------------------------------------- |
 | `agent/start` · `agent/stop`  | `handlers/lifecycle.ts`                         | the agent cannot run at all — these are `abstract`, so this fails to compile |
-| `agent/list_models`           | `handlers/models.ts`                            | no model picker; also `abstract`                                             |
+| `agent/discover`              | `handlers/discovery.ts`                         | no model picker and no commands before a session; also `abstract`            |
 | `agent/acp` (both directions) | `handlers/acp.ts` + `services/claude-client.ts` | no conversation; also `abstract`                                             |
 
 ## Skills arrive over ACP, not Effect materialization
@@ -375,9 +375,9 @@ the adapter and answers these itself, so the adapter never sees them:
 
 The adapter's own model selector is narrowed the same way: every `configOptions`
 model entry (and a `models` state, should a pin send one) in a result or a
-`config_option_update` offers only the frozen model, and `agent/list_models`
-answers that model without starting a discovery probe, which would run on the
-host's own credentials and routing.
+`config_option_update` offers only the frozen model, and `agent/discover`
+answers that model, with no commands, without starting a discovery probe, which
+would run on the host's own credentials and routing.
 
 Nothing the adapter prints on a route is trusted. Its stderr is not logged at
 all, only how many lines it wrote, and a stdout line that is not a frame is
@@ -399,24 +399,48 @@ once, as the `category: "model"` entry of the `configOptions` array in a
 `session/new` result — `default`, `sonnet`, `opus`, `haiku`, `fable` as of this
 writing.
 
-`agent/list_models` receives the workspace `cwd` and answers it by running a
-**separate, one-shot** `claude-agent-acp`, not by borrowing the connection Ora
-holds:
+`agent/discover` receives the workspace `cwd`, whether the caller wants
+commands, Ora's `deadline`, and — when commands are wanted — the Skills a
+session would get. It answers by running a **separate, one-shot**
+`claude-agent-acp`, not by borrowing the connection Ora holds (the SDK serves
+`agent/list_models` from the same method, without commands, for hosts that only
+know that name):
 
 - A request injected into Ora's connection returns its answer down Ora's pipe.
 - Ora's own `initialize` declares the client capability that decides whether the
   adapter reports a model selector at all, and discovery runs before that.
 
 The probe declares `clientCapabilities: { session: { configOptions: {} } }` —
-without it the adapter reports no model selector. Answers are cached per
-workspace for five minutes; a failure is never cached.
+without it the adapter reports no model selector. When commands are wanted, it
+watches for the session's first `available_commands_update` **before** sending
+`session/new` (a report may come ahead of the answer), sets the session up with
+the Skills through the SDK's `skillSessionSetup` and no MCP servers, and waits
+with `waitForAgentCommands`, which enforces Ora's two-second cap and the cleanup
+reserve. Keep these distinctions:
 
-`session/delete` is sent only when `initialize` advertised the capability —
-sending it unconditionally would earn a `method_not_found` on every discovery
-and clean up nothing.
+- No report in time means commands are **unknown**: leave `commands` out. An
+  empty list is a different fact — the adapter said it has none.
+- The cache key is the whole input except the deadline: `cwd`,
+  `includeCommands`, and the Skills including `revision`. Keying by `cwd` alone
+  would answer a Skill change with commands from before it.
+- The cache lives in memory only, for five minutes; a failure is never cached,
+  unknown commands are.
+- Only the probe session's own report counts: match it by the `sessionId`
+  `session/new` returned, and treat an answer without one as no report.
+- The handshake stops before the cleanup reserve, which `session/delete` uses.
+  Delete is bounded by `min(deadline, now + reserve)` less a kill margin, so a
+  hung delete still leaves time to kill the adapter and answer before the
+  deadline.
 
-Note that `onStart` and `onStop` both invalidate the catalog for their `cwd`, so
-a start/stop cycle around a picker opening makes the next open pay full price.
+`session/delete` is sent only when `initialize` advertised the capability.
+`claude-agent-acp` does (`sessionCapabilities.delete`), so every probe deletes
+its session; the gate stays because an adapter without the capability would earn
+a `method_not_found` on every discovery and clean up nothing.
+
+`onStart` and `onStop` invalidate the answers for the connection's own `cwd`.
+Desktop starts the plugin in a neutral directory, not a Workspace, so this
+rarely clears a Workspace's answers: those simply expire within the five-minute
+window. The contract asks for nothing more.
 
 ## Protocol hygiene
 
@@ -449,7 +473,7 @@ deactivation), `host-call` (every `agent/*` method with duration and outcome),
 `lifecycle`, `acp` (frame envelopes only — `method` and `id`, never `params`),
 `claude-client` (spawn, pid, exit, pipe failures), `claude-agent-acp` (the live
 adapter's own stderr, one record per line at `info`; nothing on a platform
-route, where `claude-client` records only a line count), `models` and
+route, where `claude-client` records only a line count), `discovery` and
 `acp-probe` (discovery; the probe adapter's stderr is `claude-agent-acp.probe`
 at `debug`), and `command` (which adapter was resolved and how). ACP payloads
 are never logged: a `session/prompt` carries the user's text, and the log has no
@@ -487,7 +511,7 @@ Ora parses and validates that table today but does not yet enforce it.
 - One test reads `src/main.ts` and `src/base/agent-plugin.ts` as text to assert
   retired `SkillEffectCoordinator` / `effect` wiring stays absent. Anything else
   `main.ts` would decide belongs in a handler a test can call, as
-  `agent/list_models` does.
+  `agent/discover` does.
 - Bump `orax.toml` `version` before handing someone a `.orax` to import.
   `install_local` refuses a version that is already installed and never retires
   older ones, so reusing a number silently leaves the old code running. Keep
